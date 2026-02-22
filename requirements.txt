@@ -1,0 +1,12 @@
+# Core audio analysis
+numpy
+librosa
+soundfile
+
+# API clients (optional - for transcription and synthesis)
+anthropic
+openai
+replicate
+
+# GUI (optional - for drag and drop)
+tkinterdnd2

@@ -1,0 +1,30 @@
+# Audio files
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+
+# Analysis outputs
+*.ear/
+*_viz/
+*_visualizations/
+ears/
+Shit_my_name_in_the_cloud_viz/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Reddit comparison project
+Reddit_ear/
