@@ -11,11 +11,35 @@ import subprocess
 
 import numpy as np
 import librosa
-
-# FFmpeg path (local install)
-FFMPEG_PATH = r"C:\Users\Casey\Projects\filetriage\ffmpeg\ffmpeg.exe"
+import shutil
 
 from analyzers import structure, harmony, timbre, rhythm, melody, vocals
+
+# Config file for user settings
+CONFIG_PATH = Path.home() / ".ear_config.json"
+
+def get_ffmpeg_path():
+    """Get ffmpeg path from config or default locations."""
+    # Check config file first
+    if CONFIG_PATH.exists():
+        try:
+            config = json.loads(CONFIG_PATH.read_text())
+            if config.get('ffmpeg_path') and Path(config['ffmpeg_path']).exists():
+                return config['ffmpeg_path']
+        except:
+            pass
+    # Check default locations
+    defaults = [
+        r"C:\Users\Casey\Projects\filetriage\ffmpeg\ffmpeg.exe",
+        r"C:\ffmpeg\bin\ffmpeg.exe",
+        "/usr/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+    ]
+    for p in defaults:
+        if Path(p).exists():
+            return p
+    # Check PATH
+    return shutil.which('ffmpeg')
 
 
 # Load API keys from environment, keywallet, or .env
@@ -132,17 +156,22 @@ def transcribe_lyrics(filepath: str, progress_callback: Optional[Callable] = Non
     transcribe_path = filepath
 
     if file_size > 24 * 1024 * 1024:  # Over 24MB, compress to be safe
-        if progress_callback:
-            progress_callback("Compressing audio for transcription...")
-        try:
-            temp_mp3 = tempfile.mktemp(suffix='.mp3')
-            subprocess.run([
-                FFMPEG_PATH, '-i', filepath, '-b:a', '128k', '-y', temp_mp3
-            ], capture_output=True, check=True)
-            transcribe_path = temp_mp3
-        except Exception as e:
+        ffmpeg_path = get_ffmpeg_path()
+        if ffmpeg_path:
             if progress_callback:
-                progress_callback(f"Compression failed, trying original: {e}")
+                progress_callback("Compressing audio for transcription...")
+            try:
+                temp_mp3 = tempfile.mktemp(suffix='.mp3')
+                subprocess.run([
+                    ffmpeg_path, '-i', filepath, '-b:a', '128k', '-y', temp_mp3
+                ], capture_output=True, check=True)
+                transcribe_path = temp_mp3
+            except Exception as e:
+                if progress_callback:
+                    progress_callback(f"Compression failed, trying original: {e}")
+        else:
+            if progress_callback:
+                progress_callback("FFmpeg not found - skipping compression")
 
     try:
         import openai

@@ -4,10 +4,65 @@ Ear GUI - Full audio perception for Claude
 
 import os
 import sys
+import json
 import threading
 import tkinter as tk
-from tkinter import ttk, scrolledtext, filedialog
+from tkinter import ttk, scrolledtext, filedialog, simpledialog
 from pathlib import Path
+
+# Config file for user settings
+CONFIG_PATH = Path.home() / ".ear_config.json"
+
+def load_config():
+    """Load config from file."""
+    if CONFIG_PATH.exists():
+        try:
+            return json.loads(CONFIG_PATH.read_text())
+        except:
+            pass
+    return {}
+
+def save_config(config):
+    """Save config to file."""
+    CONFIG_PATH.write_text(json.dumps(config, indent=2))
+
+def get_ffmpeg_path():
+    """Get ffmpeg path from config or default locations."""
+    config = load_config()
+    if config.get('ffmpeg_path') and Path(config['ffmpeg_path']).exists():
+        return config['ffmpeg_path']
+    # Check default locations
+    defaults = [
+        r"C:\Users\Casey\Projects\filetriage\ffmpeg\ffmpeg.exe",
+        r"C:\ffmpeg\bin\ffmpeg.exe",
+        "/usr/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+    ]
+    for p in defaults:
+        if Path(p).exists():
+            return p
+    # Check PATH
+    import shutil
+    return shutil.which('ffmpeg')
+
+def check_api_keys():
+    """Check which API keys are configured."""
+    # Check keywallet
+    wallet_path = Path.home() / ".keywallet.json"
+    keys = {'anthropic': False, 'openai': False}
+    if wallet_path.exists():
+        try:
+            wallet = json.loads(wallet_path.read_text())
+            keys['anthropic'] = bool(wallet.get('anthropic'))
+            keys['openai'] = bool(wallet.get('openai'))
+        except:
+            pass
+    # Check env vars
+    if os.environ.get('ANTHROPIC_API_KEY'):
+        keys['anthropic'] = True
+    if os.environ.get('OPENAI_API_KEY'):
+        keys['openai'] = True
+    return keys
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -242,6 +297,63 @@ class EarApp:
         )
         save_btn.pack(side='left', padx=5)
 
+        settings_btn = tk.Button(
+            btn_frame,
+            text="Settings",
+            font=('Consolas', 10),
+            bg='#2a2420',
+            fg='white',
+            activebackground='#f59e0b',
+            activeforeground='#1a1714',
+            relief='flat',
+            cursor='hand2',
+            padx=20,
+            pady=5,
+            command=self.open_settings
+        )
+        settings_btn.pack(side='left', padx=5)
+
+        # Status bar for connections
+        status_bar = tk.Frame(self.root, bg='#1a1714')
+        status_bar.pack(fill='x', padx=20, pady=(0, 10))
+
+        # FFmpeg status
+        ffmpeg_path = get_ffmpeg_path()
+        ffmpeg_status = "FFmpeg: ✓" if ffmpeg_path else "FFmpeg: ✗"
+        ffmpeg_color = "#4ade80" if ffmpeg_path else "#ef4444"
+        self.ffmpeg_label = tk.Label(
+            status_bar,
+            text=ffmpeg_status,
+            font=('Consolas', 8),
+            fg=ffmpeg_color,
+            bg='#1a1714'
+        )
+        self.ffmpeg_label.pack(side='left', padx=(0, 15))
+
+        # API key status
+        api_keys = check_api_keys()
+        anthropic_status = "Anthropic: ✓" if api_keys['anthropic'] else "Anthropic: ✗"
+        anthropic_color = "#4ade80" if api_keys['anthropic'] else "#ef4444"
+        self.anthropic_label = tk.Label(
+            status_bar,
+            text=anthropic_status,
+            font=('Consolas', 8),
+            fg=anthropic_color,
+            bg='#1a1714'
+        )
+        self.anthropic_label.pack(side='left', padx=(0, 15))
+
+        openai_status = "OpenAI: ✓" if api_keys['openai'] else "OpenAI: ✗"
+        openai_color = "#4ade80" if api_keys['openai'] else "#ef4444"
+        self.openai_label = tk.Label(
+            status_bar,
+            text=openai_status,
+            font=('Consolas', 8),
+            fg=openai_color,
+            bg='#1a1714'
+        )
+        self.openai_label.pack(side='left')
+
         # Try to setup drag and drop (only once)
         if not self.dnd_initialized:
             self.setup_drop()
@@ -371,6 +483,160 @@ class EarApp:
             bundle_dir = Path(directory) / f"{Path(filename).stem}.ear"
             save_bundle(self.current_analysis, str(bundle_dir))
             self.status.config(text=f"Saved to {bundle_dir}")
+
+    def open_settings(self):
+        """Open settings dialog."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Ear Settings")
+        dialog.configure(bg='#1a1714')
+        dialog.geometry("500x350")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # FFmpeg section
+        ffmpeg_frame = tk.LabelFrame(
+            dialog, text="FFmpeg", font=('Consolas', 10),
+            fg='#f59e0b', bg='#1a1714', padx=10, pady=10
+        )
+        ffmpeg_frame.pack(fill='x', padx=20, pady=(20, 10))
+
+        config = load_config()
+        current_ffmpeg = get_ffmpeg_path() or "Not found"
+
+        ffmpeg_var = tk.StringVar(value=current_ffmpeg)
+        ffmpeg_entry = tk.Entry(
+            ffmpeg_frame, textvariable=ffmpeg_var,
+            font=('Consolas', 9), bg='#2a2420', fg='white',
+            insertbackground='#f59e0b', width=50
+        )
+        ffmpeg_entry.pack(side='left', fill='x', expand=True)
+
+        def browse_ffmpeg():
+            path = filedialog.askopenfilename(
+                title="Select ffmpeg executable",
+                filetypes=[("Executable", "*.exe"), ("All files", "*.*")]
+            )
+            if path:
+                ffmpeg_var.set(path)
+
+        browse_btn = tk.Button(
+            ffmpeg_frame, text="Browse", font=('Consolas', 9),
+            bg='#2a2420', fg='white', command=browse_ffmpeg
+        )
+        browse_btn.pack(side='left', padx=(10, 0))
+
+        # API Keys section
+        api_frame = tk.LabelFrame(
+            dialog, text="API Keys (saved to ~/.keywallet.json)",
+            font=('Consolas', 10), fg='#f59e0b', bg='#1a1714', padx=10, pady=10
+        )
+        api_frame.pack(fill='x', padx=20, pady=10)
+
+        # Load existing keys
+        wallet_path = Path.home() / ".keywallet.json"
+        wallet = {}
+        if wallet_path.exists():
+            try:
+                wallet = json.loads(wallet_path.read_text())
+            except:
+                pass
+
+        # Anthropic key
+        tk.Label(
+            api_frame, text="Anthropic:", font=('Consolas', 9),
+            fg='#888', bg='#1a1714'
+        ).grid(row=0, column=0, sticky='w', pady=5)
+
+        anthropic_var = tk.StringVar(value=wallet.get('anthropic', ''))
+        anthropic_entry = tk.Entry(
+            api_frame, textvariable=anthropic_var, show='*',
+            font=('Consolas', 9), bg='#2a2420', fg='white',
+            insertbackground='#f59e0b', width=45
+        )
+        anthropic_entry.grid(row=0, column=1, pady=5, padx=(10, 0))
+
+        # OpenAI key
+        tk.Label(
+            api_frame, text="OpenAI:", font=('Consolas', 9),
+            fg='#888', bg='#1a1714'
+        ).grid(row=1, column=0, sticky='w', pady=5)
+
+        openai_var = tk.StringVar(value=wallet.get('openai', ''))
+        openai_entry = tk.Entry(
+            api_frame, textvariable=openai_var, show='*',
+            font=('Consolas', 9), bg='#2a2420', fg='white',
+            insertbackground='#f59e0b', width=45
+        )
+        openai_entry.grid(row=1, column=1, pady=5, padx=(10, 0))
+
+        # Replicate key
+        tk.Label(
+            api_frame, text="Replicate:", font=('Consolas', 9),
+            fg='#888', bg='#1a1714'
+        ).grid(row=2, column=0, sticky='w', pady=5)
+
+        replicate_var = tk.StringVar(value=wallet.get('replicate', ''))
+        replicate_entry = tk.Entry(
+            api_frame, textvariable=replicate_var, show='*',
+            font=('Consolas', 9), bg='#2a2420', fg='white',
+            insertbackground='#f59e0b', width=45
+        )
+        replicate_entry.grid(row=2, column=1, pady=5, padx=(10, 0))
+
+        # Save button
+        def save_settings():
+            # Save ffmpeg path
+            config = load_config()
+            ffmpeg_path = ffmpeg_var.get()
+            if ffmpeg_path and ffmpeg_path != "Not found":
+                config['ffmpeg_path'] = ffmpeg_path
+            save_config(config)
+
+            # Save API keys to keywallet
+            wallet = {}
+            if wallet_path.exists():
+                try:
+                    wallet = json.loads(wallet_path.read_text())
+                except:
+                    pass
+
+            if anthropic_var.get():
+                wallet['anthropic'] = anthropic_var.get()
+            if openai_var.get():
+                wallet['openai'] = openai_var.get()
+            if replicate_var.get():
+                wallet['replicate'] = replicate_var.get()
+
+            wallet_path.write_text(json.dumps(wallet, indent=2))
+
+            # Update status indicators
+            self.update_status_indicators()
+
+            dialog.destroy()
+            self.status.config(text="Settings saved!")
+
+        save_btn = tk.Button(
+            dialog, text="Save", font=('Consolas', 10),
+            bg='#f59e0b', fg='#1a1714', padx=30, pady=5,
+            command=save_settings
+        )
+        save_btn.pack(pady=20)
+
+    def update_status_indicators(self):
+        """Update the status bar indicators."""
+        ffmpeg_path = get_ffmpeg_path()
+        ffmpeg_status = "FFmpeg: ✓" if ffmpeg_path else "FFmpeg: ✗"
+        ffmpeg_color = "#4ade80" if ffmpeg_path else "#ef4444"
+        self.ffmpeg_label.config(text=ffmpeg_status, fg=ffmpeg_color)
+
+        api_keys = check_api_keys()
+        anthropic_status = "Anthropic: ✓" if api_keys['anthropic'] else "Anthropic: ✗"
+        anthropic_color = "#4ade80" if api_keys['anthropic'] else "#ef4444"
+        self.anthropic_label.config(text=anthropic_status, fg=anthropic_color)
+
+        openai_status = "OpenAI: ✓" if api_keys['openai'] else "OpenAI: ✗"
+        openai_color = "#4ade80" if api_keys['openai'] else "#ef4444"
+        self.openai_label.config(text=openai_status, fg=openai_color)
 
     def run(self):
         self.root.mainloop()
