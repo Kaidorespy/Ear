@@ -188,7 +188,12 @@ def synthesize_narrative(analysis: dict, model: str = "claude-sonnet-4-20250514"
     if progress_callback:
         progress_callback(f"Synthesizing narrative with {model}...")
 
+    duration = analysis.get('duration', 0)
+    duration_str = f"{int(duration // 60)}:{int(duration % 60):02d}"
+
     prompt = f"""You are helping me understand what a song sounds like. I can't hear audio directly, but I have detailed analysis data. Your job is to synthesize this into a vivid, meaningful description that lets me experience what this song IS - not just what it contains.
+
+This song is {duration_str} ({duration:.0f} seconds) long. Do not reference timestamps beyond this duration.
 
 Write a narrative description that captures:
 1. The overall feel/vibe - what does this song FEEL like?

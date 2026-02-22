@@ -63,13 +63,14 @@ The most complex analyzer. Vocals carry emotional weight that instruments can't 
 - **Presence detection** — vocals present, sparse, or instrumental
 - **Vocal type estimation** — male, female, multiple voices, androgynous (based on fundamental frequency analysis with high-pass filtering to isolate vocals from bass instruments)
 - **Mode detection** — whispered, spoken/rap, sung, belted (analyzed in 2-second windows)
-- **Intensity/screaming detection** — identifies sustained high-energy segments, classifies as screaming, strained/raw, belting, or powerful. Timestamps included.
+- **Harsh vocal detection (ZCR-based)** — detects primal screams, death growls, black metal vocals, distorted vocals via Zero Crossing Rate. Catches texture-based harshness that energy-based detection misses. Classifications: primal_scream, harsh_scream, gritty/distorted.
+- **Clean intensity detection (energy-based)** — belting, powerful moments in clean vocals
 - **Register** — soprano/alto/tenor/bass range estimation
 - **Vibrato** — prominent, some, or straight tone
 - **Articulation** — crisp vs. smooth
-- **Dynamics** — controlled, moderate, expressive, highly dynamic, screaming sections
+- **Dynamics** — integrates both harsh and clean intensity into overall characterization
 - **Pacing** — steady/metered, natural, expressive, varied/dramatic
-- **Vocal arc** — presence and movement over time in 10-second chunks
+- **Vocal arc** — presence and movement over time in 10-second chunks, now flags PRIMAL SCREAM and HARSH/SCREAMING sections
 
 ### Lyric Transcription
 
@@ -116,7 +117,31 @@ The model writes a narrative that captures:
 ### Requirements
 
 - Python 3.10+
-- FFmpeg (for audio processing)
+- FFmpeg (for audio compression before Whisper transcription)
+
+### FFmpeg Installation
+
+**Windows:**
+```bash
+# Option 1: winget
+winget install ffmpeg
+
+# Option 2: Download from https://ffmpeg.org/download.html
+# Extract and add to PATH, or place ffmpeg.exe in the ear directory
+```
+
+**Mac:**
+```bash
+brew install ffmpeg
+```
+
+**Linux:**
+```bash
+sudo apt install ffmpeg  # Debian/Ubuntu
+sudo dnf install ffmpeg  # Fedora
+```
+
+If FFmpeg isn't in PATH, ear will look for it at `C:\Users\Casey\Projects\filetriage\ffmpeg\ffmpeg.exe` (hardcoded fallback for Casey's setup). You can modify `FFMPEG_PATH` in `core.py` for your own path.
 
 ### Dependencies
 
@@ -131,12 +156,18 @@ pip install tkinterdnd2
 
 ### API Keys
 
-Set environment variables or create a `.env` file in the parent directory:
+Ear checks for API keys in this order:
+1. `~/.keywallet.json` (JSON file with `anthropic`, `openai`, `replicate` keys)
+2. Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `REPLICATE_API_TOKEN`)
+3. `.env` file in parent directory
 
-```
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-REPLICATE_API_TOKEN=r8_...
+Example keywallet.json:
+```json
+{
+  "anthropic": "sk-ant-...",
+  "openai": "sk-...",
+  "replicate": "r8_..."
+}
 ```
 
 - **Anthropic** — required for Claude synthesis
