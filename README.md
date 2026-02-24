@@ -63,7 +63,7 @@ The most complex analyzer. Vocals carry emotional weight that instruments can't 
 - **Presence detection** — vocals present, sparse, or instrumental
 - **Vocal type estimation** — male, female, multiple voices, androgynous (based on fundamental frequency analysis with high-pass filtering to isolate vocals from bass instruments)
 - **Mode detection** — whispered, spoken/rap, sung, belted (analyzed in 2-second windows)
-- **Harsh vocal detection (ZCR-based)** — detects primal screams, death growls, black metal vocals, distorted vocals via Zero Crossing Rate. Catches texture-based harshness that energy-based detection misses. Classifications: primal_scream, harsh_scream, gritty/distorted.
+- **Harsh vocal detection (ML classifier)** — Random Forest classifier trained on 221 clips across harsh/clean vocals. Uses MFCC standard deviations to detect timbral chaos vs. control — the key insight that solved the "Whitney problem" (powerful clean belting was being misdetected as harsh). 98.6% cross-validation accuracy. Detects: death growls, black metal vocals, screamo, distorted vocals.
 - **Clean intensity detection (energy-based)** — belting, powerful moments in clean vocals
 - **Register** — soprano/alto/tenor/bass range estimation
 - **Vibrato** — prominent, some, or straight tone
@@ -109,6 +109,10 @@ The model writes a narrative that captures:
 - `claude-3-5-haiku-20241022`
 - `gpt-4o`
 - `gpt-4o-mini`
+- `qwen-plus`, `qwen-turbo`, `qwen2.5-72b-instruct` (via DashScope)
+- `ollama:modelname` — any local Ollama model (e.g., `ollama:llama3.2`, `ollama:qwen2.5:14b`)
+
+The dropdown is editable — type any model name for custom setups.
 
 ---
 
@@ -166,13 +170,16 @@ Example keywallet.json:
 {
   "anthropic": "sk-ant-...",
   "openai": "sk-...",
-  "replicate": "r8_..."
+  "replicate": "r8_...",
+  "dashscope": "sk-..."
 }
 ```
 
 - **Anthropic** — required for Claude synthesis
 - **OpenAI** — required for Whisper transcription
 - **Replicate** — required for source separation (optional feature)
+- **DashScope** — required for Qwen models (optional, via `DASHSCOPE_API_KEY`)
+- **Ollama** — no key needed, just have Ollama running locally on port 11434
 
 ---
 
@@ -284,6 +291,11 @@ ear/
 │   ├── rhythm.py        # Groove, swing, pulse
 │   ├── melody.py        # Contour, range, movement
 │   └── vocals.py        # Delivery, intensity, modes
+├── harsh_classifier/    # ML model for harsh vocal detection
+│   ├── models/          # Trained classifier (.joblib)
+│   ├── predict.py       # Inference
+│   ├── train.py         # Training pipeline
+│   └── features.py      # Feature extraction
 └── ears/                # Analyzed songs (gitignored)
 ```
 
@@ -298,19 +310,19 @@ All analyzers use **librosa** for audio loading and feature extraction:
 
 Vocals analyzer applies a **120Hz high-pass Butterworth filter** before pitch tracking to prevent bass instruments from being misdetected as low male vocals.
 
-### Intensity Detection
+### Harsh Vocal Detection
 
-The vocals analyzer uses a multi-factor approach to detect screaming/belting:
-- **Spectral flatness** — screaming has more noise-like qualities
-- **Zero-crossing rate** — rough vocals have higher ZCR
-- **Spectral centroid** — screaming tends brighter/harsher
-- **Sustained energy** — screaming holds, singing breathes
+The vocals analyzer uses a trained Random Forest classifier for harsh vocal detection.
 
-Segments with sustained high energy (>0.7 normalized RMS for >0.5 seconds) get classified as:
-- **Screaming** — high roughness + long duration
-- **Strained/raw** — moderate roughness
-- **Belting** — high centroid, low roughness
-- **Powerful** — high energy, low roughness
+**The Whitney Problem:** Early versions used ZCR and energy-based heuristics, but Whitney Houston belting was being classified as harsh while some actual harsh vocals slipped through. Power ≠ harshness.
+
+**The Solution:** MFCC standard deviations. Harsh vocals are *chaotic* frame-to-frame — the timbre varies wildly. Clean vocals, no matter how LOUD, stay *controlled*. This distinction is captured in the variance of MFCCs over time.
+
+**Training data:** 221 clips auto-labeled from known harsh (Cannibal Corpse, Black Dahlia Murder, Slipknot) and clean (Adele, Whitney Houston, Celine Dion) artists.
+
+**Features:** 40 total — MFCCs (mean + std), spectral centroid/bandwidth/rolloff, ZCR, RMS.
+
+**Accuracy:** 98.6% cross-validation. Whitney stays clean. Cannibal Corpse stays harsh. Linkin Park correctly splits between Chester's clean and harsh sections.
 
 ---
 

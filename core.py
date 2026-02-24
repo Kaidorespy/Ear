@@ -49,6 +49,7 @@ def load_api_keys():
         'anthropic': os.environ.get('ANTHROPIC_API_KEY'),
         'openai': os.environ.get('OPENAI_API_KEY'),
         'replicate': os.environ.get('REPLICATE_API_TOKEN'),
+        'dashscope': os.environ.get('DASHSCOPE_API_KEY'),
     }
 
     # Try keywallet first (Casey's setup)
@@ -62,6 +63,8 @@ def load_api_keys():
                 keys['openai'] = wallet.get('openai')
             if not keys['replicate']:
                 keys['replicate'] = wallet.get('replicate')
+            if not keys['dashscope']:
+                keys['dashscope'] = wallet.get('dashscope')
         except:
             pass
 
@@ -78,33 +81,99 @@ def load_api_keys():
                         keys['openai'] = value
                     elif key == 'REPLICATE_API_TOKEN' and not keys['replicate']:
                         keys['replicate'] = value
+                    elif key == 'DASHSCOPE_API_KEY' and not keys['dashscope']:
+                        keys['dashscope'] = value
 
     return keys
 
 
-def separate_sources(filepath: str, progress_callback: Optional[Callable] = None) -> Optional[dict]:
-    """Separate audio into stems using demucs via Replicate API.
+def separate_sources_local(filepath: str, progress_callback: Optional[Callable] = None) -> Optional[dict]:
+    """Separate audio into stems using local demucs (free, no API needed).
 
     Returns dict with paths to separated stems, or None if separation fails.
     """
+    try:
+        import demucs.separate
+        import torch
+    except ImportError:
+        if progress_callback:
+            progress_callback("Demucs not installed - run: pip install demucs")
+        return None
+
+    if progress_callback:
+        progress_callback("Separating sources locally (this may take a few minutes)...")
+
+    try:
+        # Create output directory
+        stem_dir = Path(tempfile.mkdtemp(prefix="ear_stems_"))
+
+        # Run demucs separation
+        # Using htdemucs model (good balance of speed/quality)
+        demucs.separate.main([
+            "--out", str(stem_dir),
+            "-n", "htdemucs",  # model name
+            "--two-stems", "vocals",  # just vocals and accompaniment (faster)
+            filepath
+        ])
+
+        # Find the output files
+        # Demucs creates: stem_dir/htdemucs/trackname/{vocals.wav, no_vocals.wav}
+        track_name = Path(filepath).stem
+        output_dir = stem_dir / "htdemucs" / track_name
+
+        stems = {}
+        if (output_dir / "vocals.wav").exists():
+            stems['vocals'] = str(output_dir / "vocals.wav")
+        if (output_dir / "no_vocals.wav").exists():
+            stems['accompaniment'] = str(output_dir / "no_vocals.wav")
+
+        if stems:
+            if progress_callback:
+                progress_callback(f"Separation complete: {', '.join(stems.keys())}")
+            return stems
+        else:
+            if progress_callback:
+                progress_callback("Separation completed but no stems found")
+            return None
+
+    except Exception as e:
+        if progress_callback:
+            progress_callback(f"Local separation failed: {e}")
+        return None
+
+
+def separate_sources(filepath: str, progress_callback: Optional[Callable] = None, use_local: bool = True) -> Optional[dict]:
+    """Separate audio into stems.
+
+    Tries local demucs first (free), falls back to Replicate API if needed.
+
+    Returns dict with paths to separated stems, or None if separation fails.
+    """
+    # Try local demucs first (free!)
+    if use_local:
+        result = separate_sources_local(filepath, progress_callback)
+        if result:
+            return result
+
+    # Fall back to Replicate API
     keys = load_api_keys()
     if not keys['replicate']:
         if progress_callback:
-            progress_callback("No Replicate API key - skipping source separation")
+            progress_callback("No Replicate API key and local demucs failed")
         return None
 
     try:
         import replicate
     except ImportError:
         if progress_callback:
-            progress_callback("Replicate not installed - skipping source separation")
+            progress_callback("Replicate not installed")
         return None
 
     # Set the API token in environment (replicate library reads from env)
     os.environ['REPLICATE_API_TOKEN'] = keys['replicate']
 
     if progress_callback:
-        progress_callback("Separating sources (this may take a minute)...")
+        progress_callback("Separating sources via API...")
 
     try:
         # Use demucs model on Replicate
@@ -264,8 +333,39 @@ Write your description now. Be vivid. Make me feel it."""
             )
             return response.choices[0].message.content
 
+        elif model.startswith("qwen"):
+            # Qwen via DashScope (OpenAI-compatible API)
+            import openai
+            client = openai.OpenAI(
+                api_key=keys['dashscope'],
+                base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+            )
+
+            response = client.chat.completions.create(
+                model=model,
+                max_tokens=2000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.choices[0].message.content
+
+        elif model.startswith("ollama:"):
+            # Local Ollama models (e.g., "ollama:llama3.2")
+            import openai
+            model_name = model.replace("ollama:", "")
+            client = openai.OpenAI(
+                api_key="ollama",  # Ollama doesn't need a real key
+                base_url="http://localhost:11434/v1"
+            )
+
+            response = client.chat.completions.create(
+                model=model_name,
+                max_tokens=2000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.choices[0].message.content
+
         else:
-            return f"Unknown model: {model}"
+            return f"Unknown model: {model}. Use 'ollama:modelname' for local models."
 
     except Exception as e:
         if progress_callback:
@@ -325,9 +425,18 @@ def run_full_analysis(filepath: str,
         progress_callback("Analyzing melody...")
     result['melody'] = melody.analyze(y, sr)
 
+    # Compute genre context for weighted harsh vocal detection
+    # High tempo + low tonality + high density = likely metal
+    genre_context = vocals.estimate_genre_context(
+        tempo=result['structure'].get('tempo'),
+        tonality=result['timbre'].get('overall_tonality'),
+        energy_density=result['structure'].get('onset_density')
+    )
+
     if progress_callback:
         progress_callback("Analyzing vocals...")
-    result['vocals'] = vocals.analyze(y, sr)
+    result['vocals'] = vocals.analyze(y, sr, genre_context=genre_context)
+    result['vocals']['genre_context'] = genre_context  # include for debugging
 
     # Optional: Source separation
     if do_separation:
@@ -336,11 +445,14 @@ def run_full_analysis(filepath: str,
             result['stems'] = stems
 
             # Re-analyze isolated vocals if we got them
+            # Isolated vocals get higher trust for harsh detection
             if 'vocals' in stems:
                 if progress_callback:
                     progress_callback("Analyzing isolated vocals...")
                 y_voc, _ = librosa.load(stems['vocals'], sr=22050)
-                result['vocals_isolated'] = vocals.analyze(y_voc, sr, is_isolated_vocals=True)
+                # For isolated vocals, use more permissive settings
+                isolated_context = {'metal_likelihood': 1.0, 'density_threshold_adjustment': 3.0}
+                result['vocals_isolated'] = vocals.analyze(y_voc, sr, is_isolated_vocals=True, genre_context=isolated_context)
 
     # Optional: Transcription
     if do_transcription:

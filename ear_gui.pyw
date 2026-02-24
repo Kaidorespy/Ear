@@ -137,12 +137,17 @@ class EarApp:
                 "claude-opus-4-20250514",
                 "claude-3-5-haiku-20241022",
                 "gpt-4o",
-                "gpt-4o-mini"
+                "gpt-4o-mini",
+                "qwen-plus",
+                "qwen-turbo",
+                "qwen2.5-72b-instruct",
+                "ollama:llama3.2",
+                "ollama:qwen2.5:14b",
             ],
-            state="readonly",
             width=25,
             font=('Consolas', 9)
         )
+        # Editable - type any model name (e.g., "ollama:your-model")
         model_dropdown.pack(side='left', padx=(5, 20))
 
         # Checkboxes
@@ -642,12 +647,23 @@ class EarApp:
         self.root.mainloop()
 
 
+def close_splash():
+    """Close PyInstaller splash screen if running from frozen exe."""
+    try:
+        import pyi_splash
+        pyi_splash.close()
+    except ImportError:
+        pass  # Not running from PyInstaller bundle
+
+
 if __name__ == "__main__":
     # Handle command line
     if len(sys.argv) > 1:
+        close_splash()
         from core import run_full_analysis, format_analysis_text
         result = run_full_analysis(sys.argv[1], progress_callback=print)
         print(format_analysis_text(result))
     else:
         app = EarApp()
+        close_splash()  # Close splash once window is built
         app.run()

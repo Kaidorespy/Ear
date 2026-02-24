@@ -31,3 +31,25 @@ Handoff.*
 
 # Reddit comparison project
 Reddit_ear/
+
+# Build artifacts
+build/
+dist/
+*.spec.bak
+
+# Windows
+desktop.ini
+
+# Dev screenshots and alternates
+1.PNG
+Handoff.png
+Feb 23*.png
+Ear.png
+Ear2.ico
+splash2.png
+
+# Training data (audio clips - too large)
+harsh_classifier/data/
+
+# Test files
+test_stems/

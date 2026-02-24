@@ -7,6 +7,182 @@ or full mix (less accurate but still useful)
 import numpy as np
 import librosa
 from scipy import signal
+from pathlib import Path
+import joblib
+
+# ML Harsh Vocal Classifier
+def _get_model_path():
+    """Get model path - handles both dev and PyInstaller bundled exe."""
+    import sys
+    if getattr(sys, 'frozen', False):
+        # Running as bundled exe
+        base = Path(sys._MEIPASS)
+    else:
+        # Running in dev
+        base = Path(__file__).parent.parent
+    return base / "harsh_classifier" / "models" / "harsh_classifier.joblib"
+
+_HARSH_MODEL_PATH = _get_model_path()
+_harsh_classifier = None
+
+def _load_harsh_classifier():
+    """Lazy-load the harsh vocal classifier."""
+    global _harsh_classifier
+    if _harsh_classifier is None and _HARSH_MODEL_PATH.exists():
+        _harsh_classifier = joblib.load(_HARSH_MODEL_PATH)
+    return _harsh_classifier
+
+
+def _extract_ml_features(y: np.ndarray, sr: int = 22050) -> np.ndarray:
+    """Extract features for ML classifier (must match training features)."""
+    features = []
+
+    # MFCCs
+    mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+    features.extend(np.mean(mfccs, axis=1))
+    features.extend(np.std(mfccs, axis=1))
+
+    # Spectral centroid
+    centroid = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
+    features.append(np.mean(centroid))
+    features.append(np.std(centroid))
+
+    # Spectral flatness
+    flatness = librosa.feature.spectral_flatness(y=y)[0]
+    features.append(np.mean(flatness))
+    features.append(np.std(flatness))
+
+    # Spectral rolloff
+    rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr)[0]
+    features.append(np.mean(rolloff))
+    features.append(np.std(rolloff))
+
+    # ZCR
+    zcr = librosa.feature.zero_crossing_rate(y)[0]
+    features.append(np.mean(zcr))
+    features.append(np.std(zcr))
+
+    # RMS
+    rms = librosa.feature.rms(y=y)[0]
+    features.append(np.mean(rms))
+    features.append(np.std(rms))
+
+    # Bandwidth
+    bandwidth = librosa.feature.spectral_bandwidth(y=y, sr=sr)[0]
+    features.append(np.mean(bandwidth))
+    features.append(np.std(bandwidth))
+
+    return np.array(features, dtype=np.float32)
+
+
+def detect_harsh_vocals_ml(y, sr, chunk_duration: float = 3.0):
+    """ML-based harsh vocal detection using trained classifier.
+
+    Returns harsh_segments list and harsh_character string.
+    Much more accurate than ZCR-based detection - can distinguish
+    powerful clean belting (Whitney, Adele) from actual harsh vocals.
+    """
+    clf = _load_harsh_classifier()
+    if clf is None:
+        # Fallback to empty if model not found
+        return [], 'unknown (model not loaded)'
+
+    duration = len(y) / sr
+    chunk_samples = int(chunk_duration * sr)
+    hop_samples = int(chunk_samples * 0.5)  # 50% overlap
+
+    results = []
+    pos = 0
+
+    while pos + chunk_samples <= len(y):
+        chunk = y[pos:pos + chunk_samples]
+        time_start = pos / sr
+
+        # Skip quiet sections
+        rms = np.sqrt(np.mean(chunk ** 2))
+        if rms < 0.01:
+            pos += hop_samples
+            continue
+
+        try:
+            features = _extract_ml_features(chunk, sr)
+            proba = clf.predict_proba([features])[0]
+            pred = clf.predict([features])[0]
+
+            results.append({
+                'time_start': time_start,
+                'time_end': time_start + chunk_duration,
+                'prediction': 'harsh' if pred == 1 else 'clean',
+                'harsh_prob': float(proba[1]),
+                'clean_prob': float(proba[0]),
+            })
+        except Exception:
+            pass
+
+        pos += hop_samples
+
+    if not results:
+        return [], 'no vocal content detected'
+
+    # Build harsh segments from consecutive harsh predictions
+    harsh_segments = []
+    in_harsh = False
+    seg_start = 0
+    seg_probs = []
+
+    for r in results:
+        if r['prediction'] == 'harsh' and not in_harsh:
+            in_harsh = True
+            seg_start = r['time_start']
+            seg_probs = [r['harsh_prob']]
+        elif r['prediction'] == 'harsh' and in_harsh:
+            seg_probs.append(r['harsh_prob'])
+        elif r['prediction'] == 'clean' and in_harsh:
+            # End segment
+            harsh_segments.append({
+                'start': float(seg_start),
+                'end': float(r['time_start']),
+                'duration': float(r['time_start'] - seg_start),
+                'avg_confidence': float(np.mean(seg_probs)),
+                'peak_confidence': float(max(seg_probs)),
+                'type': 'harsh_ml'
+            })
+            in_harsh = False
+            seg_probs = []
+
+    # Close final segment if still in harsh
+    if in_harsh and results:
+        harsh_segments.append({
+            'start': float(seg_start),
+            'end': float(results[-1]['time_end']),
+            'duration': float(results[-1]['time_end'] - seg_start),
+            'avg_confidence': float(np.mean(seg_probs)),
+            'peak_confidence': float(max(seg_probs)),
+            'type': 'harsh_ml'
+        })
+
+    # Calculate overall stats
+    harsh_count = sum(1 for r in results if r['prediction'] == 'harsh')
+    total_count = len(results)
+    harsh_ratio = harsh_count / total_count if total_count > 0 else 0
+    avg_harsh_prob = np.mean([r['harsh_prob'] for r in results])
+
+    # Determine character (thresholds tuned to not flag powerful clean belting)
+    # Adele belting = ~25% harsh ratio, should be "clean" or "occasional grit" at most
+    if harsh_ratio > 0.7:
+        harsh_character = 'extreme harsh vocals throughout'
+    elif harsh_ratio > 0.5:
+        harsh_character = 'predominantly harsh'
+    elif harsh_ratio > 0.4:
+        harsh_character = 'harsh vocal sections'
+    elif harsh_ratio > 0.30:
+        harsh_character = 'harsh moments'
+    elif avg_harsh_prob > 0.4:
+        harsh_character = 'occasional grit'
+    else:
+        harsh_character = 'clean'
+
+    return harsh_segments, harsh_character
 
 
 def highpass_filter(y, sr, cutoff=120):
@@ -22,55 +198,144 @@ def highpass_filter(y, sr, cutoff=120):
     return signal.filtfilt(b, a, y)
 
 
-def detect_harsh_vocals(y, sr, rms, times):
-    """Detect harsh/screamed vocals via Zero Crossing Rate.
+def estimate_genre_context(tempo: float = None, tonality: float = None,
+                           energy_density: float = None) -> dict:
+    """Estimate genre context to help weight harsh vocal detection.
 
-    ZCR detects TEXTURE, not volume. Harsh vocals (black metal screams,
-    death growls, distorted vocals) have high ZCR regardless of energy.
+    Returns a dict with:
+    - metal_likelihood: 0-1 score of how likely this is metal/hardcore
+    - density_threshold_adjustment: how much to lower density threshold
+
+    High tempo (>130) + low tonality (distortion) + high density = likely metal
+    """
+    metal_score = 0.0
+
+    # Fast tempo suggests metal/hardcore/punk
+    if tempo:
+        if tempo > 160:
+            metal_score += 0.4
+        elif tempo > 130:
+            metal_score += 0.25
+        elif tempo > 110:
+            metal_score += 0.1
+
+    # Low tonality suggests distorted guitars (noise-like)
+    if tonality is not None:
+        if tonality < 30:  # very noisy/distorted
+            metal_score += 0.4
+        elif tonality < 50:
+            metal_score += 0.2
+
+    # High energy density suggests wall-of-sound
+    if energy_density:
+        if energy_density > 4.0:
+            metal_score += 0.2
+        elif energy_density > 3.0:
+            metal_score += 0.1
+
+    # Cap at 1.0
+    metal_score = min(1.0, metal_score)
+
+    # Adjust density threshold based on metal likelihood
+    # Metal context: lower threshold (more permissive)
+    # Pop context: keep threshold high (conservative)
+    threshold_adjustment = metal_score * 3.0  # up to 3.0 lower
+
+    return {
+        'metal_likelihood': metal_score,
+        'density_threshold_adjustment': threshold_adjustment
+    }
+
+
+def detect_harsh_vocals(y, sr, rms, times, genre_context: dict = None):
+    """Detect harsh/screamed vocals with genre context awareness.
+
+    Uses conservative thresholds by default, but relaxes them if genre
+    context suggests metal/hardcore (high tempo, distorted guitars, etc.)
+
+    This prevents powerful clean vocalists (Whitney, Bonnie Tyler) from
+    being flagged as "harsh" while still catching death metal growls.
 
     Returns harsh_segments list and harsh_character string.
     """
-    # Zero crossing rate - THE harsh vocal detector
+    # Zero crossing rate
     zcr = librosa.feature.zero_crossing_rate(y)[0]
 
     # RMS for filtering out silence
     rms_normalized = rms / np.max(rms) if np.max(rms) > 0 else rms
 
-    # Thresholds tuned from AVisualizer analysis
-    ZCR_HARSH_THRESHOLD = 0.12     # above this = harsh texture
-    ZCR_SCREAM_THRESHOLD = 0.20    # above this = definite scream/harsh
-    ZCR_PRIMAL_THRESHOLD = 0.30    # above this = primal/extreme
-    ENERGY_FLOOR = 0.15            # need some energy to count as vocal
-    MIN_HARSH_DURATION = 0.3       # seconds, filter transients
+    # Base thresholds (conservative for pop/jazz)
+    ZCR_HARSH_THRESHOLD = 0.20
+    ZCR_SCREAM_THRESHOLD = 0.30
+    ZCR_PRIMAL_THRESHOLD = 0.40
+    ENERGY_FLOOR = 0.20
+    BASE_DENSITY_THRESHOLD = 7.0  # conservative default
 
+    # Adjust density threshold based on genre context
+    density_threshold = BASE_DENSITY_THRESHOLD
+    if genre_context:
+        adjustment = genre_context.get('density_threshold_adjustment', 0)
+        density_threshold = max(3.0, BASE_DENSITY_THRESHOLD - adjustment)
+        # Metal context can lower threshold to 4.0 (7.0 - 3.0)
+
+    min_len = min(len(zcr), len(rms_normalized), len(times))
+    duration = times[-1] if len(times) > 0 else 0
+
+    # Count harsh frames (high ZCR + high energy)
+    harsh_frames = []
+    for i in range(min_len):
+        if zcr[i] > ZCR_HARSH_THRESHOLD and rms_normalized[i] > ENERGY_FLOOR:
+            harsh_frames.append({
+                'time': times[i],
+                'zcr': zcr[i],
+                'energy': rms_normalized[i]
+            })
+
+    # Calculate density in 10-second windows
+    window_size = 10.0
+    num_windows = int(np.ceil(duration / window_size))
+    dense_windows = []
+
+    for w in range(num_windows):
+        start = w * window_size
+        end = min((w + 1) * window_size, duration)
+        window_harsh = [f for f in harsh_frames if start <= f['time'] < end]
+
+        window_duration = end - start
+        if window_duration > 0:
+            density = len(window_harsh) / window_duration
+            # Density threshold varies by genre context
+            # Pop/jazz: 7.0 (conservative), Metal: down to 4.0 (permissive)
+            if density > density_threshold:
+                avg_zcr = np.mean([f['zcr'] for f in window_harsh]) if window_harsh else 0
+                dense_windows.append({
+                    'start': start,
+                    'end': end,
+                    'density': density,
+                    'avg_zcr': avg_zcr,
+                    'frame_count': len(window_harsh)
+                })
+
+    # Build harsh_segments from dense windows (merge adjacent)
     harsh_segments = []
-    in_harsh_segment = False
-    segment_start = 0
-    segment_zcr_values = []
+    if dense_windows:
+        current_seg = {
+            'start': dense_windows[0]['start'],
+            'end': dense_windows[0]['end'],
+            'zcr_values': [dense_windows[0]['avg_zcr']],
+            'densities': [dense_windows[0]['density']]
+        }
 
-    for i, (z, e, t) in enumerate(zip(zcr, rms_normalized, times)):
-        is_harsh = z > ZCR_HARSH_THRESHOLD and e > ENERGY_FLOOR
+        for w in dense_windows[1:]:
+            if w['start'] <= current_seg['end']:  # adjacent or overlapping
+                current_seg['end'] = w['end']
+                current_seg['zcr_values'].append(w['avg_zcr'])
+                current_seg['densities'].append(w['density'])
+            else:
+                # Finalize current segment
+                avg_zcr = np.mean(current_seg['zcr_values'])
+                peak_zcr = np.max(current_seg['zcr_values'])
 
-        if is_harsh and not in_harsh_segment:
-            in_harsh_segment = True
-            segment_start = t
-            segment_zcr_values = [z]
-        elif is_harsh and in_harsh_segment:
-            segment_zcr_values.append(z)
-        elif not is_harsh and in_harsh_segment:
-            in_harsh_segment = False
-            duration = t - segment_start
-
-            if duration >= MIN_HARSH_DURATION and segment_zcr_values:
-                peak_zcr = float(np.max(segment_zcr_values))
-                avg_zcr = float(np.mean(segment_zcr_values))
-
-                # Get energy for this segment
-                start_idx = np.searchsorted(times, segment_start)
-                end_idx = i
-                seg_energy = float(np.mean(rms_normalized[start_idx:end_idx])) if end_idx > start_idx else 0
-
-                # Classify harsh type by ZCR intensity
                 if peak_zcr > ZCR_PRIMAL_THRESHOLD:
                     harsh_type = 'primal_scream'
                 elif peak_zcr > ZCR_SCREAM_THRESHOLD:
@@ -79,31 +344,59 @@ def detect_harsh_vocals(y, sr, rms, times):
                     harsh_type = 'gritty/distorted'
 
                 harsh_segments.append({
-                    'start': float(segment_start),
-                    'end': float(t),
-                    'duration': float(duration),
+                    'start': float(current_seg['start']),
+                    'end': float(current_seg['end']),
+                    'duration': float(current_seg['end'] - current_seg['start']),
                     'type': harsh_type,
-                    'zcr_peak': peak_zcr,
-                    'zcr_avg': avg_zcr,
-                    'energy': seg_energy
+                    'zcr_peak': float(peak_zcr),
+                    'zcr_avg': float(avg_zcr),
+                    'density': float(np.mean(current_seg['densities']))
                 })
 
-            segment_zcr_values = []
+                current_seg = {
+                    'start': w['start'],
+                    'end': w['end'],
+                    'zcr_values': [w['avg_zcr']],
+                    'densities': [w['density']]
+                }
 
-    # Overall harsh character
+        # Don't forget the last segment
+        avg_zcr = np.mean(current_seg['zcr_values'])
+        peak_zcr = np.max(current_seg['zcr_values'])
+
+        if peak_zcr > ZCR_PRIMAL_THRESHOLD:
+            harsh_type = 'primal_scream'
+        elif peak_zcr > ZCR_SCREAM_THRESHOLD:
+            harsh_type = 'harsh_scream'
+        else:
+            harsh_type = 'gritty/distorted'
+
+        harsh_segments.append({
+            'start': float(current_seg['start']),
+            'end': float(current_seg['end']),
+            'duration': float(current_seg['end'] - current_seg['start']),
+            'type': harsh_type,
+            'zcr_peak': float(peak_zcr),
+            'zcr_avg': float(avg_zcr),
+            'density': float(np.mean(current_seg['densities']))
+        })
+
+    # Overall harsh character based on total harsh time and density
     total_harsh_time = sum(s['duration'] for s in harsh_segments)
+    harsh_ratio = total_harsh_time / duration if duration > 0 else 0
+
     primal_time = sum(s['duration'] for s in harsh_segments if s['type'] == 'primal_scream')
     harsh_scream_time = sum(s['duration'] for s in harsh_segments if s['type'] == 'harsh_scream')
 
-    if primal_time > 15 or (primal_time + harsh_scream_time) > 30:
+    if harsh_ratio > 0.5 or primal_time > 30:
         harsh_character = 'extreme harsh vocals throughout'
-    elif primal_time > 5:
+    elif harsh_ratio > 0.3 or primal_time > 15:
         harsh_character = 'primal scream sections'
-    elif harsh_scream_time > 10:
+    elif harsh_ratio > 0.15 or harsh_scream_time > 20:
         harsh_character = 'harsh vocal sections'
-    elif total_harsh_time > 5:
+    elif total_harsh_time > 10:
         harsh_character = 'harsh moments'
-    elif total_harsh_time > 0:
+    elif total_harsh_time > 3:
         harsh_character = 'occasional grit'
     else:
         harsh_character = 'clean'
@@ -355,13 +648,14 @@ def detect_vocal_modes(y, sr, rms, times, onset_times):
     return mode_arc, dominant_mode, secondary_modes
 
 
-def analyze(y, sr, is_isolated_vocals=False):
+def analyze(y, sr, is_isolated_vocals=False, genre_context: dict = None):
     """Extract vocal characteristics from audio.
 
     Args:
         y: audio signal
         sr: sample rate
         is_isolated_vocals: True if this is an isolated vocal track
+        genre_context: Optional dict from estimate_genre_context() for weighted detection
     """
     duration = librosa.get_duration(y=y, sr=sr)
 
@@ -428,8 +722,14 @@ def analyze(y, sr, is_isolated_vocals=False):
     else:
         vibrato_score = 0
 
-    # ============ Harsh Vocal Detection (ZCR-based) ============
-    harsh_segments, harsh_character = detect_harsh_vocals(y, sr, rms, times)
+    # ============ Harsh Vocal Detection (ML-based, falls back to ZCR) ============
+    clf = _load_harsh_classifier()
+    if clf is not None:
+        # Use ML classifier (much more accurate - solves the Whitney problem)
+        harsh_segments, harsh_character = detect_harsh_vocals_ml(y, sr)
+    else:
+        # Fallback to ZCR-based if model not available
+        harsh_segments, harsh_character = detect_harsh_vocals(y, sr, rms, times, genre_context)
 
     # ============ Clean Intensity Detection (energy-based) ============
     intensity_segments, intensity_character = detect_vocal_intensity(y, sr, rms, times)
