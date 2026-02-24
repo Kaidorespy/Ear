@@ -348,10 +348,21 @@ Write your description now. Be vivid. Make me feel it."""
             )
             return response.choices[0].message.content
 
-        elif model.startswith("ollama:"):
+        elif model.lower().startswith("ollama:"):
             # Local Ollama models (e.g., "ollama:llama3.2")
             import openai
-            model_name = model.replace("ollama:", "")
+            # Case-insensitive prefix removal
+            model_name = model[7:]  # Remove "ollama:" (7 chars)
+
+            # Check if Ollama is running first
+            import urllib.request
+            try:
+                urllib.request.urlopen('http://localhost:11434/api/tags', timeout=2)
+            except Exception:
+                if progress_callback:
+                    progress_callback("Ollama not running! Start it with 'ollama serve'")
+                return "[Synthesis failed: Ollama not running on localhost:11434]"
+
             client = openai.OpenAI(
                 api_key="ollama",  # Ollama doesn't need a real key
                 base_url="http://localhost:11434/v1"

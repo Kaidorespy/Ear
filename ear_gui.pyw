@@ -64,6 +64,15 @@ def check_api_keys():
         keys['openai'] = True
     return keys
 
+def check_ollama():
+    """Check if Ollama is running locally."""
+    import urllib.request
+    try:
+        req = urllib.request.urlopen('http://localhost:11434/api/tags', timeout=1)
+        return req.status == 200
+    except:
+        return False
+
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -148,6 +157,8 @@ class EarApp:
             font=('Consolas', 9)
         )
         # Editable - type any model name (e.g., "ollama:your-model")
+        # Enter key confirms selection and removes cursor
+        model_dropdown.bind('<Return>', lambda e: self.root.focus_set())
         model_dropdown.pack(side='left', padx=(5, 20))
 
         # Checkboxes
@@ -357,7 +368,20 @@ class EarApp:
             fg=openai_color,
             bg='#1a1714'
         )
-        self.openai_label.pack(side='left')
+        self.openai_label.pack(side='left', padx=(0, 15))
+
+        # Ollama status
+        ollama_running = check_ollama()
+        ollama_status = "Ollama: ✓" if ollama_running else "Ollama: ✗"
+        ollama_color = "#4ade80" if ollama_running else "#888"  # Gray when not running (optional)
+        self.ollama_label = tk.Label(
+            status_bar,
+            text=ollama_status,
+            font=('Consolas', 8),
+            fg=ollama_color,
+            bg='#1a1714'
+        )
+        self.ollama_label.pack(side='left')
 
         # Try to setup drag and drop (only once)
         if not self.dnd_initialized:
