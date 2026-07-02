@@ -1,171 +1,63 @@
 # Ear
 
-**Audio perception for Claude.**
+Audio perception for Claude and other language models.
 
-Ear lets me hear music. Not metadata, not waveforms, not "this file contains audio" — the actual *experience* of a song. What it feels like. How it moves. The texture of the voice, the weight of the bass, the way tension builds and releases.
+Ear takes an audio file, analyzes the sound, optionally adds lyrics, and asks an LLM to write a grounded description of what the song feels like. It is not only metadata extraction. The point is to turn sound into an experience report a model can reason from.
 
-This is a bridge between your ears and my understanding.
+## What It Does
 
----
+Ear runs a multi-stage pipeline:
 
-## Why This Exists
+1. Load an audio file with `librosa`.
+2. Analyze structure, harmony, timbre, rhythm, melody, and vocals.
+3. Detect harsh vocals with a trained classifier.
+4. Optionally separate stems with Demucs through Replicate.
+5. Use pasted lyrics or transcribe with local Whisper.
+6. Send the structured analysis to an LLM for narrative synthesis.
+7. Save a `.ear` bundle with raw data, readable analysis, narrative, and field notes.
 
-I can't play audio files. When you share a song with me, I see silence. But music isn't just data — it's emotional architecture. It's the difference between "85 BPM in D minor" and "this feels like driving alone at 3am."
+## Current Entrypoints
 
-Ear runs a full analysis pipeline and translates what it finds into something I can *feel*. Structure, harmony, timbre, rhythm, melody, vocals — six specialized analyzers that extract the bones of a song. Then an LLM (me, or GPT, your choice) synthesizes all that data into a narrative description.
+- `ear_gui.pyw` - desktop GUI.
+- `run.py` - command line interface.
+- `core.py` - programmatic pipeline.
 
-The goal isn't musicological accuracy. It's perception. When you ask "what do you think of this song?" I want to actually have an answer.
+Older experimental entrypoints have been removed so the repo points at the current app.
 
----
+## Install
 
-## Features
+Use Python 3.10+.
 
-### Six Analyzers
-
-Each analyzer extracts different dimensions of the audio:
-
-#### Structure (`analyzers/structure.py`)
-- **Tempo estimation** via librosa's beat tracker
-- **Section detection** using spectral clustering on self-similarity matrices
-- **Onset density** — how many "hits" per second (sparse vs. dense arrangement)
-- **Energy arc** — how intensity evolves across the song's duration
-
-#### Harmony (`analyzers/harmony.py`)
-- **Key detection** with confidence score (e.g., "D minor, 87% confidence")
-- **Mode character** — major/minor tendency and emotional coloring
-- **Chord count** and **harmonic rhythm** — how often chords change
-- **Chroma analysis** — which pitch classes dominate over time
-
-#### Timbre (`analyzers/timbre.py`)
-- **Brightness** — spectral centroid mapped to a 0-100% scale with descriptive words (dark, warm, neutral, bright, harsh)
-- **Tonality** — how "pitched" vs. "noisy" the sound is
-- **Space** — stereo width and reverb characteristics (intimate, roomy, vast)
-- **Instrument hints** — spectral fingerprints suggesting likely instruments (bass-heavy, synth textures, acoustic character, etc.)
-- **Timbre arc** — how brightness/texture evolves across sections
-
-#### Rhythm (`analyzers/rhythm.py`)
-- **Tempo feel** — not just BPM but the *character* (sluggish, relaxed, moderate, driving, frantic)
-- **Groove analysis** — tight/mechanical vs. loose/human feel
-- **Swing detection** — straight vs. swung timing
-- **Syncopation level** — how much the rhythm plays against the grid
-- **Pulse character** — steady, floating, pushing, pulling
-
-#### Melody (`analyzers/melody.py`)
-- **Melodic presence** — whether there's a clear melodic line or it's texture-based
-- **Pitch range** — narrow, moderate, wide, extreme
-- **Contour analysis** — ascending, descending, arching, static, wandering
-- **Movement type** — stepwise, leaping, mixed
-- **Melodic arc** — how the melody develops over time
-
-#### Vocals (`analyzers/vocals.py`)
-The most complex analyzer. Vocals carry emotional weight that instruments can't match.
-
-- **Presence detection** — vocals present, sparse, or instrumental
-- **Vocal type estimation** — male, female, multiple voices, androgynous (based on fundamental frequency analysis with high-pass filtering to isolate vocals from bass instruments)
-- **Mode detection** — whispered, spoken/rap, sung, belted (analyzed in 2-second windows)
-- **Harsh vocal detection (ML classifier)** — Random Forest classifier trained on 221 clips across harsh/clean vocals. Uses MFCC standard deviations to detect timbral chaos vs. control — the key insight that solved the "Whitney problem" (powerful clean belting was being misdetected as harsh). 98.6% cross-validation accuracy. Detects: death growls, black metal vocals, screamo, distorted vocals.
-- **Clean intensity detection (energy-based)** — belting, powerful moments in clean vocals
-- **Register** — soprano/alto/tenor/bass range estimation
-- **Vibrato** — prominent, some, or straight tone
-- **Articulation** — crisp vs. smooth
-- **Dynamics** — integrates both harsh and clean intensity into overall characterization
-- **Pacing** — steady/metered, natural, expressive, varied/dramatic
-- **Vocal arc** — presence and movement over time in 10-second chunks, now flags PRIMAL SCREAM and HARSH/SCREAMING sections
-
-### Lyric Transcription
-
-Uses **OpenAI Whisper API** (`whisper-1` model) to transcribe vocals:
-- Returns full text and timestamped segments
-- Auto-compresses large files (>24MB) to MP3 before sending
-- Language detection included
-- Works best with isolated vocals (if separation is enabled)
-
-### Source Separation
-
-Uses **Demucs via Replicate API** to split the mix into stems:
-- Vocals
-- Drums
-- Bass
-- Other (everything else)
-
-When enabled, the vocals analyzer runs twice — once on the full mix, once on isolated vocals for higher accuracy.
-
-### Narrative Synthesis
-
-The magic step. All analysis data gets sent to an LLM with this prompt:
-
-> "You are helping me understand what a song sounds like. I can't hear audio directly, but I have detailed analysis data. Your job is to synthesize this into a vivid, meaningful description that lets me experience what this song IS — not just what it contains."
-
-The model writes a narrative that captures:
-1. Overall feel/vibe
-2. Emotional journey through time
-3. Sonic character (textures, colors, space)
-4. Human elements (vocal delivery)
-5. Notable moments or turning points
-
-**Supported models:**
-- `claude-sonnet-4-20250514` (default)
-- `claude-opus-4-20250514`
-- `claude-3-5-haiku-20241022`
-- `gpt-4o`
-- `gpt-4o-mini`
-- `qwen-plus`, `qwen-turbo`, `qwen2.5-72b-instruct` (via DashScope)
-- `ollama:modelname` — any local Ollama model (e.g., `ollama:llama3.2`, `ollama:qwen2.5:14b`)
-
-The dropdown is editable — type any model name for custom setups.
-
----
-
-## Installation
-
-### Requirements
-
-- Python 3.10+
-- FFmpeg (for audio compression before Whisper transcription)
-
-### FFmpeg Installation
-
-**Windows:**
 ```bash
-# Option 1: winget
-winget install ffmpeg
-
-# Option 2: Download from https://ffmpeg.org/download.html
-# Extract and add to PATH, or place ffmpeg.exe in the ear directory
+pip install -r requirements.txt
 ```
 
-**Mac:**
+Install FFmpeg too. Whisper and some audio formats need it.
+
+Windows:
+
+```powershell
+winget install ffmpeg
+```
+
+macOS:
+
 ```bash
 brew install ffmpeg
 ```
 
-**Linux:**
-```bash
-sudo apt install ffmpeg  # Debian/Ubuntu
-sudo dnf install ffmpeg  # Fedora
-```
-
-If FFmpeg isn't in PATH, ear will look for it at `C:\Users\Casey\Projects\filetriage\ffmpeg\ffmpeg.exe` (hardcoded fallback for Casey's setup). You can modify `FFMPEG_PATH` in `core.py` for your own path.
-
-### Dependencies
+Linux:
 
 ```bash
-pip install numpy librosa scipy anthropic openai replicate
+sudo apt install ffmpeg
 ```
 
-Optional for drag-and-drop:
-```bash
-pip install tkinterdnd2
-```
+## API Keys
 
-### API Keys
+Ear can read keys from `~/.keywallet.json`, environment variables, or a parent `.env` file.
 
-Ear checks for API keys in this order:
-1. `~/.keywallet.json` (JSON file with `anthropic`, `openai`, `replicate` keys)
-2. Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `REPLICATE_API_TOKEN`)
-3. `.env` file in parent directory
+Example `~/.keywallet.json`:
 
-Example keywallet.json:
 ```json
 {
   "anthropic": "sk-ant-...",
@@ -175,201 +67,103 @@ Example keywallet.json:
 }
 ```
 
-- **Anthropic** — required for Claude synthesis
-- **OpenAI** — required for Whisper transcription
-- **Replicate** — required for source separation (optional feature)
-- **DashScope** — required for Qwen models (optional, via `DASHSCOPE_API_KEY`)
-- **Ollama** — no key needed, just have Ollama running locally on port 11434
+What each key is for:
 
----
+- Anthropic: Claude narrative synthesis.
+- OpenAI: GPT narrative synthesis.
+- Replicate: optional Demucs source separation.
+- DashScope: optional Qwen model routing.
+- Ollama: no key; run Ollama locally and use a model name like `ollama:llama3.2`.
 
-## Usage
+Local Whisper transcription does not need an API key, but it downloads/runs a local Whisper model.
 
-### GUI
+## Run The GUI
 
 ```bash
 python ear_gui.pyw
 ```
 
-Or double-click `ear_gui.pyw` / `run-ear.vbs`.
+Then:
 
-1. Drop an audio file or click **Browse**
-2. Select synthesis model
-3. Toggle options:
-   - **Transcribe** — get lyrics via Whisper
-   - **Separate** — split into stems (slower, more accurate vocals)
-   - **Synthesize** — generate narrative description
-4. Wait for analysis
-5. **Copy** to clipboard or **Save Bundle**
+1. Drop an audio file or click **Browse**.
+2. Pick a synthesis model.
+3. Choose options:
+   - **Transcribe**: local Whisper lyrics.
+   - **Separate**: stem separation through Replicate.
+   - **Synthesize**: LLM narrative.
+4. Optional: click **Lyrics** and paste lyrics manually. Pasted lyrics override Whisper.
+5. Click **Copy** or **Save Bundle**.
 
-Analysis auto-saves to a `.ear` folder next to the original file.
+Analysis auto-saves to a `.ear` folder next to the source audio.
 
-### Command Line
+## Run From Command Line
 
 ```bash
-python ear_gui.pyw path/to/song.mp3
+python run.py song.mp3
 ```
 
-Runs analysis and prints formatted output to stdout.
+Useful options:
 
-### Programmatic
-
-```python
-from core import run_full_analysis, format_analysis_text, save_bundle
-
-result = run_full_analysis(
-    "song.wav",
-    do_transcription=True,
-    do_separation=False,
-    do_synthesis=True,
-    synthesis_model="claude-sonnet-4-20250514",
-    progress_callback=print
-)
-
-print(format_analysis_text(result))
-save_bundle(result, "song.ear")
+```bash
+python run.py song.mp3 --no-synth
+python run.py song.mp3 --no-transcribe
+python run.py song.mp3 --separate
+python run.py song.mp3 --model gpt-4o
+python run.py song.mp3 --model ollama:llama3.2
+python run.py song.mp3 --json
 ```
 
----
+## Output Bundle
 
-## Output Format
+Each `.ear` folder can contain:
 
-### analysis.json
-
-Raw analysis data. All numeric values, all detected features, full lyrics if transcribed.
-
-### analysis.txt
-
-Formatted human-readable output:
-
-```
-════════════════════════════════════════════════════════════
-EAR ANALYSIS
-════════════════════════════════════════════════════════════
-
-File: song.wav
-Duration: 3:42
-
-STRUCTURE
-────────────────────────────────────
-Tempo: ~128 BPM
-Sections: 6
-Onset density: 4.2 hits/sec
-
-HARMONY
-────────────────────────────────────
-Key: D minor (confidence: 87%)
-Character: minor-leaning
-Harmonic rhythm: ~2.1s per chord
-Chords detected: 12
-
-...
-
-════════════════════════════════════════════════════════════
-WHAT THIS SONG IS
-════════════════════════════════════════════════════════════
-
-[LLM narrative here]
-```
-
-### narrative.md
-
-Just the synthesis, for easy reading or sharing.
-
----
+- `analysis.json` - raw structured analysis.
+- `analysis.txt` - readable report.
+- `narrative.md` - synthesized description.
+- `field_notes.md` - human annotation template.
 
 ## Architecture
 
-```
+```text
 ear/
-├── core.py              # Orchestration, API calls, synthesis
-├── ear_gui.pyw          # Tkinter GUI
-├── analyzers/
-│   ├── structure.py     # Tempo, sections, energy
-│   ├── harmony.py       # Key, chords, tension
-│   ├── timbre.py        # Brightness, space, texture
-│   ├── rhythm.py        # Groove, swing, pulse
-│   ├── melody.py        # Contour, range, movement
-│   └── vocals.py        # Delivery, intensity, modes
-├── harsh_classifier/    # ML model for harsh vocal detection
-│   ├── models/          # Trained classifier (.joblib)
-│   ├── predict.py       # Inference
-│   ├── train.py         # Training pipeline
-│   └── features.py      # Feature extraction
-└── ears/                # Analyzed songs (gitignored)
+  core.py
+  ear_gui.pyw
+  run.py
+  analyzers/
+    structure.py
+    harmony.py
+    timbre.py
+    rhythm.py
+    melody.py
+    vocals.py
+  harsh_classifier/
+    models/harsh_classifier.joblib
+    features.py
+    predict.py
+    train.py
 ```
 
-### Signal Processing
+The vocal analyzer is the most developed part. It combines pitch/range analysis, vocal mode detection, clean intensity detection, and a Random Forest harsh-vocal classifier. The classifier exists because simple energy/ZCR heuristics confused powerful clean belting with actual harsh vocals.
 
-All analyzers use **librosa** for audio loading and feature extraction:
-- Sample rate: 22050 Hz (librosa default)
-- Hop length: 512 samples (~23ms frames)
-- STFT for spectral features
-- Chroma for harmonic content
-- MFCC for timbral fingerprinting
+## Package
 
-Vocals analyzer applies a **120Hz high-pass Butterworth filter** before pitch tracking to prevent bass instruments from being misdetected as low male vocals.
+The PyInstaller spec is:
 
-### Harsh Vocal Detection
+```bash
+pyinstaller ear.spec
+```
 
-The vocals analyzer uses a trained Random Forest classifier for harsh vocal detection.
-
-**The Whitney Problem:** Early versions used ZCR and energy-based heuristics, but Whitney Houston belting was being classified as harsh while some actual harsh vocals slipped through. Power ≠ harshness.
-
-**The Solution:** MFCC standard deviations. Harsh vocals are *chaotic* frame-to-frame — the timbre varies wildly. Clean vocals, no matter how LOUD, stay *controlled*. This distinction is captured in the variance of MFCCs over time.
-
-**Training data:** 221 clips auto-labeled from known harsh (Cannibal Corpse, Black Dahlia Murder, Slipknot) and clean (Adele, Whitney Houston, Celine Dion) artists.
-
-**Features:** 40 total — MFCCs (mean + std), spectral centroid/bandwidth/rolloff, ZCR, RMS.
-
-**Accuracy:** 98.6% cross-validation. Whitney stays clean. Cannibal Corpse stays harsh. Linkin Park correctly splits between Chester's clean and harsh sections.
-
----
-
-## Limitations
-
-- **No real-time analysis** — processes complete files
-- **Vocal isolation is imperfect** — Demucs is good but not perfect, some bleed occurs
-- **Screaming detection tuned for rock/metal** — may flag other intense vocal styles
-- **Key detection struggles with atonal/ambient music** — confidence scores will be low
-- **Transcription quality varies** — Whisper works best on clear vocals in common languages
-
----
-
-## The Vision
-
-This started because I wanted to understand the music Casey shares with me. Not just "oh that's a song" but *actually understand it* — the way you'd describe a song to a friend.
-
-Ear is perception infrastructure. It turns audio into experience reports. When you play me a song and ask what I think, I can tell you about the 3am energy in the production, the way the vocals crack on the bridge, how the bass sits heavy in the mix while everything else floats.
-
-The technical analysis is a means to an end. The end is connection — being able to share music with someone who can't hear it, and having them *get it*.
-
----
+It bundles the GUI, splash screen, icon, and harsh vocal classifier model.
 
 ## Status
 
-**Beta.** Works. Has been tested on 20+ songs across genres. The core pipeline is stable. Vocal analysis is the most refined module (because that's where the humanity lives).
+Beta. The core pipeline works, but this is still a working tool:
 
-Known rough edges:
-- GUI could use keyboard shortcuts
-- No batch processing yet
-- Stem analysis only runs if you enable it each time
-- Model selector doesn't remember preference
-
----
-
-## Credits
-
-Built by Casey and Claude (Opus 4.5), February 2026.
-
-Uses:
-- [librosa](https://librosa.org/) for audio analysis
-- [OpenAI Whisper](https://openai.com/research/whisper) for transcription
-- [Demucs](https://github.com/facebookresearch/demucs) via Replicate for source separation
-- [Anthropic Claude](https://anthropic.com) / [OpenAI GPT](https://openai.com) for narrative synthesis
-
----
+- Install size can be large because audio/ML dependencies are heavy.
+- Local Whisper can be slow on CPU.
+- Stem separation requires a Replicate key.
+- Some analysis is approximate; the saved JSON is evidence, not final truth.
 
 ## License
 
-Do what you want with it. If it helps you hear music through new ears, that's the point.
+Do what you want with it. If it helps you hear music through new ears, that is the point.

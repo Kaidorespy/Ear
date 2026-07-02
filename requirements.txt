@@ -1,12 +1,20 @@
 # Core audio analysis
 numpy
+scipy
 librosa
 soundfile
 
-# API clients (optional - for transcription and synthesis)
+# Harsh vocal classifier runtime
+joblib
+scikit-learn
+
+# Local lyric transcription
+openai-whisper
+
+# LLM / service clients
 anthropic
 openai
 replicate
 
-# GUI (optional - for drag and drop)
+# GUI drag-and-drop support
 tkinterdnd2
