@@ -1,3 +1,5 @@
+<img width="1024" height="1024" alt="Ear" src="https://github.com/user-attachments/assets/3ac16dd0-194c-4263-9017-8bc40f0c8f44" />
+
 # Ear
 
 Audio perception for Claude and other language models.
