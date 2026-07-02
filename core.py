@@ -207,64 +207,39 @@ def separate_sources(filepath: str, progress_callback: Optional[Callable] = None
 
 
 def transcribe_lyrics(filepath: str, progress_callback: Optional[Callable] = None) -> Optional[dict]:
-    """Transcribe lyrics using OpenAI Whisper API.
+    """Transcribe lyrics using local Whisper (medium model).
 
     Returns dict with full text and timestamped segments.
     """
-    keys = load_api_keys()
-    if not keys['openai']:
+    try:
+        import whisper
+    except ImportError:
         if progress_callback:
-            progress_callback("No OpenAI API key - skipping transcription")
+            progress_callback("Local Whisper not installed - run: pip install openai-whisper")
         return None
 
     if progress_callback:
-        progress_callback("Transcribing lyrics...")
-
-    # Check file size - Whisper API limit is 25MB
-    file_size = Path(filepath).stat().st_size
-    transcribe_path = filepath
-
-    if file_size > 24 * 1024 * 1024:  # Over 24MB, compress to be safe
-        ffmpeg_path = get_ffmpeg_path()
-        if ffmpeg_path:
-            if progress_callback:
-                progress_callback("Compressing audio for transcription...")
-            try:
-                temp_mp3 = tempfile.mktemp(suffix='.mp3')
-                subprocess.run([
-                    ffmpeg_path, '-i', filepath, '-b:a', '128k', '-y', temp_mp3
-                ], capture_output=True, check=True)
-                transcribe_path = temp_mp3
-            except Exception as e:
-                if progress_callback:
-                    progress_callback(f"Compression failed, trying original: {e}")
-        else:
-            if progress_callback:
-                progress_callback("FFmpeg not found - skipping compression")
+        progress_callback("Loading Whisper medium model (this may take a moment)...")
 
     try:
-        import openai
-        client = openai.OpenAI(api_key=keys['openai'])
+        model = whisper.load_model("medium")
 
-        with open(transcribe_path, "rb") as f:
-            transcript = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-                response_format="verbose_json",
-                timestamp_granularities=["segment"]
-            )
+        if progress_callback:
+            progress_callback("Transcribing lyrics (local Whisper medium)...")
+
+        result = model.transcribe(filepath)
 
         return {
-            'text': transcript.text,
+            'text': result.get('text', ''),
             'segments': [
                 {
-                    'start': seg.start,
-                    'end': seg.end,
-                    'text': seg.text
+                    'start': seg['start'],
+                    'end': seg['end'],
+                    'text': seg['text']
                 }
-                for seg in transcript.segments
-            ] if hasattr(transcript, 'segments') else [],
-            'language': transcript.language if hasattr(transcript, 'language') else 'unknown'
+                for seg in result.get('segments', [])
+            ],
+            'language': result.get('language', 'unknown')
         }
 
     except Exception as e:
@@ -389,7 +364,8 @@ def run_full_analysis(filepath: str,
                       do_transcription: bool = True,
                       do_synthesis: bool = True,
                       synthesis_model: str = "claude-sonnet-4-20250514",
-                      progress_callback: Optional[Callable] = None) -> dict:
+                      progress_callback: Optional[Callable] = None,
+                      manual_lyrics: Optional[str] = None) -> dict:
     """Run complete audio analysis pipeline.
 
     Args:
@@ -466,7 +442,9 @@ def run_full_analysis(filepath: str,
                 result['vocals_isolated'] = vocals.analyze(y_voc, sr, is_isolated_vocals=True, genre_context=isolated_context)
 
     # Optional: Transcription
-    if do_transcription:
+    if manual_lyrics:
+        result['lyrics'] = {'text': manual_lyrics, 'segments': [], 'language': 'manual'}
+    elif do_transcription:
         # Use isolated vocals if available, otherwise full mix
         transcribe_path = result.get('stems', {}).get('vocals', filepath)
         lyrics = transcribe_lyrics(transcribe_path, progress_callback)
@@ -597,11 +575,7 @@ def format_analysis_text(analysis: dict) -> str:
         lines.append("LYRICS")
         lines.append("─" * 40)
         if l.get('text'):
-            # Show first 500 chars
-            text = l['text'][:500]
-            if len(l['text']) > 500:
-                text += "..."
-            lines.append(text)
+            lines.append(l['text'])
         lines.append("")
 
     # Narrative
@@ -641,5 +615,14 @@ def save_bundle(analysis: dict, output_dir: str) -> str:
         with open(out / "narrative.md", "w", encoding='utf-8') as f:
             f.write(f"# {analysis.get('file', 'Song')}\n\n")
             f.write(analysis['narrative'])
+
+    # Save field notes template for human annotation
+    with open(out / "field_notes.md", "w", encoding='utf-8') as f:
+        f.write(f"# Field Notes: {analysis.get('file', 'Song')}\n\n")
+        f.write("What surprised me:\n\n")
+        f.write("What keeps recurring:\n\n")
+        f.write("Where it sits in the album:\n\n")
+        f.write("Best accidental Suno choice:\n\n")
+        f.write("Line/moment I can't stop hearing:\n\n")
 
     return str(out)

@@ -97,6 +97,7 @@ class EarApp:
 
         self.current_analysis = None
         self.dnd_initialized = False
+        self.manual_lyrics = None
 
         self.build_ui()
 
@@ -281,6 +282,22 @@ class EarApp:
         )
         browse_btn.pack(side='left', padx=5)
 
+        self.lyrics_btn = tk.Button(
+            btn_frame,
+            text="Lyrics",
+            font=('Consolas', 10),
+            bg='#2a2420',
+            fg='white',
+            activebackground='#f59e0b',
+            activeforeground='#1a1714',
+            relief='flat',
+            cursor='hand2',
+            padx=20,
+            pady=5,
+            command=self.paste_lyrics
+        )
+        self.lyrics_btn.pack(side='left', padx=5)
+
         copy_btn = tk.Button(
             btn_frame,
             text="Copy",
@@ -446,7 +463,8 @@ class EarApp:
                     do_transcription=self.do_transcription.get(),
                     do_synthesis=self.do_synthesis.get(),
                     synthesis_model=self.model_var.get(),
-                    progress_callback=self.update_status
+                    progress_callback=self.update_status,
+                    manual_lyrics=self.manual_lyrics
                 )
                 self.root.after(0, lambda: self.show_result(result, filepath))
             except Exception as e:
@@ -491,6 +509,68 @@ class EarApp:
         self.output.delete('1.0', 'end')
         self.output.insert('1.0', f"Error: {error}")
         self.status.config(text="Error")
+
+    def paste_lyrics(self):
+        """Open dialog to paste in lyrics manually."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Paste Lyrics")
+        dialog.configure(bg='#1a1714')
+        dialog.geometry("600x450")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        tk.Label(
+            dialog,
+            text="Paste lyrics below. These will be used instead of Whisper transcription.",
+            font=('Consolas', 9),
+            fg='#888',
+            bg='#1a1714',
+            wraplength=560
+        ).pack(padx=20, pady=(15, 5))
+
+        text_area = scrolledtext.ScrolledText(
+            dialog,
+            font=('Consolas', 10),
+            bg='#12100e',
+            fg='white',
+            insertbackground='#f59e0b',
+            relief='flat',
+            wrap=tk.WORD
+        )
+        text_area.pack(fill='both', expand=True, padx=20, pady=5)
+
+        if self.manual_lyrics:
+            text_area.insert('1.0', self.manual_lyrics)
+
+        btn_row = tk.Frame(dialog, bg='#1a1714')
+        btn_row.pack(pady=10)
+
+        def save():
+            text = text_area.get('1.0', 'end').strip()
+            self.manual_lyrics = text if text else None
+            self._update_lyrics_btn()
+            dialog.destroy()
+
+        def clear():
+            self.manual_lyrics = None
+            self._update_lyrics_btn()
+            dialog.destroy()
+
+        tk.Button(
+            btn_row, text="Use These Lyrics", font=('Consolas', 10),
+            bg='#f59e0b', fg='#1a1714', padx=15, pady=5, command=save
+        ).pack(side='left', padx=5)
+
+        tk.Button(
+            btn_row, text="Clear", font=('Consolas', 10),
+            bg='#2a2420', fg='white', padx=15, pady=5, command=clear
+        ).pack(side='left', padx=5)
+
+    def _update_lyrics_btn(self):
+        if self.manual_lyrics:
+            self.lyrics_btn.config(text="Lyrics ✓", fg='#4ade80')
+        else:
+            self.lyrics_btn.config(text="Lyrics", fg='white')
 
     def copy_output(self):
         """Copy output to clipboard."""
