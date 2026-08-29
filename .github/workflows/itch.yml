@@ -1,0 +1,32 @@
+name: publish to itch.io
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt pyinstaller
+
+      - run: pyinstaller --noconfirm ear.spec
+
+      - name: Download butler
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://broth.itch.zone/butler/windows-amd64/LATEST/archive/default" -OutFile butler.zip
+          Expand-Archive butler.zip -DestinationPath butler
+
+      - name: Push build to itch.io
+        shell: pwsh
+        env:
+          BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+        run: .\butler\butler.exe push "dist" formslip/ear:windows --userversion "1.0.${{ github.run_number }}"
