@@ -15,7 +15,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install -r requirements.txt pyinstaller
+      # pillow lets pyinstaller resize the oversized splash.png at build time
+      - run: pip install -r requirements.txt pillow pyinstaller
 
       - run: pyinstaller --noconfirm ear.spec
 
